@@ -4,7 +4,7 @@
 
 import { auth, ensureSignedIn } from "./firebase-init.js";
 import {
-  BOARD_SIZE, renderBoard, cellLabel, createEmptyGrid,
+  BOARD_SIZE, renderBoard, cellLabel, createEmptyGrid, buildShipCellMap,
 } from "./board.js";
 import { SHAPES, getShipCells, isPlacementValid, cellsToSet, SHIPS_PER_PLAYER } from "./ship-shapes.js";
 import { LocalGame } from "./game-local.js";
@@ -72,6 +72,21 @@ document.getElementById("btn-vs-player").addEventListener("click", async () => {
 
 document.getElementById("btn-private-room").addEventListener("click", () => {
   showScreen("privateRoom");
+});
+
+document.getElementById("btn-back-to-login").addEventListener("click", () => {
+  showScreen("login");
+});
+
+document.getElementById("btn-back-to-menu-from-room").addEventListener("click", () => {
+  showScreen("menu");
+});
+
+document.getElementById("btn-back-to-menu-from-placement").addEventListener("click", () => {
+  // Cancels any pending "quick match" search or abandons an unfinished
+  // placement — nothing has actually started yet, so no confirmation needed.
+  cleanupGameState();
+  showScreen("menu");
 });
 
 document.getElementById("btn-create-room").addEventListener("click", async () => {
@@ -149,7 +164,8 @@ let hoverAnchor = null;
 
 function drawPlacementBoard() {
   const container = document.getElementById("placement-board-container");
-  const shipCellSet = cellsToSet(state.myShips.flatMap((s) => s.cells));
+  const shipCellSet = cellsToSet(state.myShips.flatMap((s) => s.cells)); // for validity checks
+  const shipCellMap = buildShipCellMap(state.myShips); // for rendering + distinct outlines
   let hoverCells = new Set();
   let hoverInvalid = false;
 
@@ -164,7 +180,7 @@ function drawPlacementBoard() {
 
   renderBoard(container, {
     mode: "placement",
-    shipCellSet,
+    shipCellMap,
     hoverCells,
     onCellClick: (r, c) => {
       if (state.myShips.length >= SHIPS_PER_PLAYER) return;
@@ -284,7 +300,8 @@ function renderLocalGameState() {
 
   renderBoard(ownContainer, {
     mode: "own",
-    shipCellSet: cellsToSet(state.myShips.flatMap((s) => s.cells)),
+    shipCellMap: buildShipCellMap(state.myShips),
+    grid: g.gridAISeesOfPlayer, // exactly the marks the AI has landed on your board
   });
 
   document.getElementById("game-status").textContent =
@@ -344,9 +361,16 @@ function renderMultiplayerGameState(data) {
     },
   });
 
+  const myHitGrid = createEmptyGrid();
+  Object.entries(myHitsReceived).forEach(([key, result]) => {
+    const [r, c] = key.split(",").map(Number);
+    myHitGrid[r][c] = result === "miss" ? "miss" : result === "hit" ? "hit" : "head";
+  });
+
   renderBoard(document.getElementById("own-board-container"), {
     mode: "own",
-    shipCellSet: cellsToSet(state.myShips.flatMap((s) => s.cells)),
+    shipCellMap: buildShipCellMap(state.myShips),
+    grid: myHitGrid,
   });
 
   let statusText = "";
