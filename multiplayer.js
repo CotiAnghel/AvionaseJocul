@@ -154,7 +154,9 @@ export async function resolvePendingShotIfMine(gameId, myUid, gameData) {
 
   let result = "miss";
   let updatedShips = myShips;
-  const hitShip = myShips.find((s) => !s.destroyed && s.cells.some(([r, c]) => r === shot.row && c === shot.col));
+  // Include already-destroyed planes: any of their remaining cells should
+  // still register as a "hit", not a miss, if fired at again.
+  const hitShip = myShips.find((s) => s.cells.some(([r, c]) => r === shot.row && c === shot.col));
 
   if (hitShip) {
     const isHead = hitShip.headCell[0] === shot.row && hitShip.headCell[1] === shot.col;

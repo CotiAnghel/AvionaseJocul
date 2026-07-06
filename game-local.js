@@ -73,7 +73,10 @@ export class LocalGame {
   }
 
   _resolveShot(ships, row, col) {
-    const ship = ships.find((s) => !s.destroyed && s.cells.some(([r, c]) => r === row && c === col));
+    // Include already-destroyed planes too: any of their cells still count as
+    // a "hit" (not a miss) if fired at again — only the head cell result is
+    // "head", and destroying it again is a harmless no-op.
+    const ship = ships.find((s) => s.cells.some(([r, c]) => r === row && c === col));
     if (!ship) return "miss";
     const isHead = ship.headCell[0] === row && ship.headCell[1] === col;
     if (isHead) ship.destroyed = true;
