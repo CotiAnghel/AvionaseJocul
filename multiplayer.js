@@ -209,7 +209,7 @@ export async function resolvePendingShotIfMine(gameId, myUid, gameData) {
     [`hits.${myUid}.${shot.row},${shot.col}`]: result,
     [`destroyedCount.${myUid}`]: destroyedCount,
     pendingShot: null,
-    turn: shot.by,
+    turn: myUid, // pass the turn to whoever just got shot at — they attack next
     status: iLost ? "finished" : "playing",
     winner: iLost ? shot.by : null,
   });
