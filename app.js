@@ -368,13 +368,22 @@ function subscribeMultiplayerGame() {
     if (data.status === "playing" && !screens.game.classList.contains("active")) {
       showScreen("game");
     }
-    await MP.resolvePendingShotIfMine(state.gameId, state.uid, data);
+    if (data.order.includes(state.uid)) {
+      await MP.resolvePendingShotIfMine(state.gameId, state.uid, data);
+    }
     renderMultiplayerGameState(data);
   });
 }
 
 function renderMultiplayerGameState(data) {
   state.lastGameStatus = data.status;
+
+  if (!data.order.includes(state.uid)) {
+    document.getElementById("game-status").textContent =
+      "Sesiunea curenta nu mai corespunde acestui joc (posibil ai reincarcat pagina si ai primit o alta identitate anonima). Apasa \"Inchide jocul\" si reintra.";
+    return;
+  }
+
   const opponentUid = data.order.find((u) => u !== state.uid);
   const myHitsReceived = data.hits?.[state.uid] || {};
   const opponentHitsReceived = data.hits?.[opponentUid] || {};
@@ -390,7 +399,9 @@ function renderMultiplayerGameState(data) {
     grid: attackGrid,
     onCellClick: (r, c) => {
       if (data.turn !== state.uid || data.status === "finished") return;
-      MP.fireShot(state.gameId, state.uid, r, c);
+      MP.fireShot(state.gameId, state.uid, r, c).catch((err) => {
+        console.warn("Shot rejected:", err.message);
+      });
     },
   });
 
