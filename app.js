@@ -107,13 +107,42 @@ function waitForOpponentThenPlace(gameId) {
 }
 
 // ---------- PLACEMENT ----------
+const SHIP_LABELS = ["primul", "al doilea", "al treilea"];
+
 function startPlacement(isMultiplayer = false) {
   state.myShips = [];
   state.rotation = 0;
   showScreen("placement");
-  document.getElementById("placement-info").textContent =
-    `Plaseaza cele ${SHIPS_PER_PLAYER} avioane (0/${SHIPS_PER_PLAYER}). Click pentru a plasa, R pentru a roti.`;
+  updatePlacementInfo();
+
+  const container = document.getElementById("placement-board-container");
+  if (!container.dataset.hoverBound) {
+    container.addEventListener("mousemove", (e) => {
+      const cell = e.target.closest(".board-slot");
+      if (!cell) return;
+      const r = Number(cell.dataset.row);
+      const c = Number(cell.dataset.col);
+      if (hoverAnchor && hoverAnchor[0] === r && hoverAnchor[1] === c) return;
+      hoverAnchor = [r, c];
+      drawPlacementBoard();
+    });
+    container.dataset.hoverBound = "true";
+  }
+
   drawPlacementBoard();
+}
+
+function updatePlacementInfo() {
+  const count = state.myShips.length;
+  const infoEl = document.getElementById("placement-info");
+  if (count >= SHIPS_PER_PLAYER) {
+    infoEl.textContent = `Ai plasat toate cele ${SHIPS_PER_PLAYER} avioane. Apasa "Confirma plasarea" cand esti gata.`;
+  } else {
+    infoEl.textContent =
+      `Plaseaza ${SHIP_LABELS[count]} avion (${count}/${SHIPS_PER_PLAYER}). ` +
+      `Muta mouse-ul pe harta pentru previzualizare, click pentru a plasa. ` +
+      `Foloseste butonul "Roteste" (sau tasta R) ca sa schimbi orientarea inainte de a plasa.`;
+  }
 }
 
 let hoverAnchor = null;
@@ -122,11 +151,14 @@ function drawPlacementBoard() {
   const container = document.getElementById("placement-board-container");
   const shipCellSet = cellsToSet(state.myShips.flatMap((s) => s.cells));
   let hoverCells = new Set();
+  let hoverInvalid = false;
 
-  if (hoverAnchor) {
+  if (hoverAnchor && state.myShips.length < SHIPS_PER_PLAYER) {
     const [r, c] = hoverAnchor;
     if (isPlacementValid(r, c, state.rotation, shipCellSet, BOARD_SIZE)) {
       hoverCells = cellsToSet(getShipCells(r, c, state.rotation));
+    } else {
+      hoverInvalid = true;
     }
   }
 
@@ -139,34 +171,38 @@ function drawPlacementBoard() {
       if (!isPlacementValid(r, c, state.rotation, shipCellSet, BOARD_SIZE)) return;
       const cells = getShipCells(r, c, state.rotation);
       state.myShips.push({ cells, headCell: cells[0] });
+      hoverAnchor = null;
       drawPlacementBoard();
-      document.getElementById("placement-info").textContent =
-        `Plaseaza cele ${SHIPS_PER_PLAYER} avioane (${state.myShips.length}/${SHIPS_PER_PLAYER}). Click pentru a plasa, R pentru a roti.`;
+      updatePlacementInfo();
       if (state.myShips.length === SHIPS_PER_PLAYER) {
         document.getElementById("btn-confirm-placement").disabled = false;
       }
     },
   });
 
-  container.addEventListener("mousemove", (e) => {
-    const cell = e.target.closest(".board-slot");
-    if (!cell) return;
-    hoverAnchor = [Number(cell.dataset.row), Number(cell.dataset.col)];
-    drawPlacementBoard();
-  }, { once: true });
+  if (hoverInvalid) container.classList.add("invalid-preview");
+  else container.classList.remove("invalid-preview");
 }
+
+function rotateShip() {
+  state.rotation = (state.rotation + 1) % 4;
+  drawPlacementBoard();
+}
+
+document.getElementById("btn-rotate-ship").addEventListener("click", rotateShip);
 
 document.addEventListener("keydown", (e) => {
   if (e.key.toLowerCase() === "r" && screens.placement.classList.contains("active")) {
-    state.rotation = (state.rotation + 1) % 4;
-    drawPlacementBoard();
+    rotateShip();
   }
 });
 
 document.getElementById("btn-undo-ship").addEventListener("click", () => {
+  if (state.myShips.length === 0) return;
   state.myShips.pop();
   document.getElementById("btn-confirm-placement").disabled = true;
   drawPlacementBoard();
+  updatePlacementInfo();
 });
 
 document.getElementById("btn-confirm-placement").addEventListener("click", async () => {
@@ -182,6 +218,46 @@ document.getElementById("btn-confirm-placement").addEventListener("click", async
 
 document.querySelectorAll("input[name=difficulty]").forEach((el) => {
   el.addEventListener("change", (e) => { state.difficulty = e.target.value; });
+});
+
+// ---------- GAME CONTROLS: new game / quit ----------
+function isGameUnfinished() {
+  if (state.mode === "ai") return !!state.localGame && !state.localGame.winner;
+  if (state.mode === "pvp") return state.lastGameStatus && state.lastGameStatus !== "finished";
+  return false;
+}
+
+function cleanupGameState() {
+  if (state.unsubGame) { state.unsubGame(); state.unsubGame = null; }
+  if (state.cancelQuickMatch) { state.cancelQuickMatch(); state.cancelQuickMatch = null; }
+  state.localGame = null;
+  state.gameId = null;
+  state.lastGameStatus = null;
+  state.aiMoveScheduled = false;
+}
+
+document.getElementById("btn-new-game").addEventListener("click", () => {
+  if (isGameUnfinished() && !confirm("Jocul curent nu s-a terminat inca. Daca incepi un joc nou, vei pierde partida in desfasurare. Continui?")) {
+    return;
+  }
+  const mode = state.mode;
+  const difficulty = state.difficulty;
+  cleanupGameState();
+  if (mode === "ai") {
+    state.mode = "ai";
+    state.difficulty = difficulty;
+    startPlacement();
+  } else {
+    showScreen("menu"); // PvP: o partida noua necesita cautare/creare camera noua
+  }
+});
+
+document.getElementById("btn-quit-game").addEventListener("click", () => {
+  if (isGameUnfinished() && !confirm("Jocul curent nu s-a terminat inca. Daca inchizi, abandonezi partida. Continui?")) {
+    return;
+  }
+  cleanupGameState();
+  showScreen("menu");
 });
 
 // ---------- LOCAL (vs AI) GAME ----------
@@ -202,12 +278,7 @@ function renderLocalGameState() {
       if (g.turn !== "player" || g.winner) return;
       g.playerFire(r, c);
       renderLocalGameState();
-      if (g.winner) return finishLocalGame();
-      setTimeout(() => {
-        g.aiTurn();
-        renderLocalGameState();
-        if (g.winner) finishLocalGame();
-      }, 600);
+      if (g.winner) finishLocalGame();
     },
   });
 
@@ -218,6 +289,22 @@ function renderLocalGameState() {
 
   document.getElementById("game-status").textContent =
     g.winner ? "" : g.turn === "player" ? "Randul tau — ataca!" : "Calculatorul se gandeste...";
+
+  driveAIIfNeeded();
+}
+
+// Fires whenever it becomes the AI's turn — covers both "AI moves after the
+// human" AND "AI happens to go first" (the random starting player).
+function driveAIIfNeeded() {
+  const g = state.localGame;
+  if (!g || g.winner || g.turn !== "ai" || state.aiMoveScheduled) return;
+  state.aiMoveScheduled = true;
+  setTimeout(() => {
+    state.aiMoveScheduled = false;
+    g.aiTurn();
+    renderLocalGameState();
+    if (g.winner) finishLocalGame();
+  }, 700);
 }
 
 function finishLocalGame() {
@@ -237,6 +324,7 @@ function subscribeMultiplayerGame() {
 }
 
 function renderMultiplayerGameState(data) {
+  state.lastGameStatus = data.status;
   const opponentUid = data.order.find((u) => u !== state.uid);
   const myHitsReceived = data.hits?.[state.uid] || {};
   const opponentHitsReceived = data.hits?.[opponentUid] || {};

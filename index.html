@@ -77,17 +77,24 @@
       <p id="placement-info" class="hint"></p>
       <div id="placement-board-container" class="board-grid"></div>
       <div class="placement-controls">
+        <button id="btn-rotate-ship" class="btn-secondary">Roteste avionul (R)</button>
         <button id="btn-undo-ship" class="btn-secondary">Anuleaza ultimul avion</button>
         <button id="btn-confirm-placement" class="btn-primary" disabled>Confirma plasarea</button>
       </div>
-      <p class="hint">Apasa <kbd>R</kbd> pentru a roti avionul inainte de plasare.</p>
+      <p class="hint">Sfat: muta mouse-ul deasupra hartii ca sa vezi unde se va plasa avionul inainte sa dai click.</p>
     </div>
   </section>
 
   <!-- GAME -->
   <section id="screen-game" class="screen">
     <div class="panel panel-wide">
-      <h2>Joc in desfasurare</h2>
+      <div class="game-top-row">
+        <h2>Joc in desfasurare</h2>
+        <div class="game-controls">
+          <button id="btn-new-game" class="btn-secondary btn-small">Joc nou</button>
+          <button id="btn-quit-game" class="btn-secondary btn-small">Inchide jocul</button>
+        </div>
+      </div>
       <p id="game-status" class="hint"></p>
       <div class="boards-row">
         <div class="board-col">
@@ -103,6 +110,6 @@
   </section>
 </div>
 
-<script type="module" src="app.js"></script>
+<script type="module" src="js/app.js"></script>
 </body>
 </html>

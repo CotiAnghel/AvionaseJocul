@@ -234,11 +234,34 @@ kbd {
 .board-col { text-align: center; }
 .board-col h3 { font-size: 0.85rem; color: var(--text-dim); }
 
+.game-top-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  border-bottom: 1px solid var(--panel-border);
+  padding-bottom: 12px;
+}
+.game-top-row h2 { border-bottom: none; padding-bottom: 0; margin: 0; }
+
+.game-controls { display: flex; gap: 8px; }
+
+.btn-small {
+  width: auto;
+  margin-top: 0;
+  padding: 8px 14px;
+  font-size: 0.8rem;
+}
+
+.board-grid.invalid-preview { outline: 2px solid var(--hit-red); outline-offset: 2px; }
+
 .placement-controls {
   display: flex;
+  flex-wrap: wrap;
   gap: 12px;
 }
-.placement-controls button { margin-top: 0; }
+.placement-controls button { margin-top: 0; width: auto; flex: 1 1 auto; }
 
 @media (max-width: 480px) {
   .board-cell { font-size: 0.6rem; }
