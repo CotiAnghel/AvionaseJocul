@@ -283,6 +283,28 @@ kbd {
 }
 .placement-controls button { margin-top: 0; width: auto; flex: 1 1 auto; }
 
-@media (max-width: 480px) {
+@media (max-width: 640px) {
+  .app-shell { padding: 16px 8px 48px; }
+  .panel { padding: 16px; max-width: 100%; }
+  .board-grid {
+    grid-template-columns: 22px repeat(10, 1fr);
+    grid-template-rows: 22px repeat(10, 1fr);
+    max-width: 100%;
+    gap: 1px;
+  }
   .board-cell { font-size: 0.6rem; }
+  .boards-row { flex-direction: column; gap: 28px; }
+  .board-col { width: 100%; }
+  .placement-controls { flex-direction: column; }
+  .game-top-row { flex-direction: column; align-items: stretch; }
+  .game-controls { justify-content: stretch; }
+  .game-controls button { flex: 1; }
+}
+
+@media (max-width: 380px) {
+  .board-grid {
+    grid-template-columns: 18px repeat(10, 1fr);
+    grid-template-rows: 18px repeat(10, 1fr);
+  }
+  .board-cell { font-size: 0.5rem; }
 }

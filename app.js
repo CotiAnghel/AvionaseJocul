@@ -52,11 +52,13 @@ document.getElementById("login-form").addEventListener("submit", async (e) => {
 // ---------- MENU ----------
 document.getElementById("btn-vs-ai").addEventListener("click", () => {
   state.mode = "ai";
+  state.opponentFound = true; // no matchmaking needed
   startPlacement();
 });
 
 document.getElementById("btn-vs-player").addEventListener("click", async () => {
   state.mode = "pvp";
+  state.opponentFound = false;
   setStatus("placement", "Se cauta un adversar...");
   showScreen("placement");
   document.getElementById("placement-board-container").innerHTML =
@@ -65,7 +67,10 @@ document.getElementById("btn-vs-player").addEventListener("click", async () => {
 
   const cancel = await MP.quickMatch(state.uid, state.name, (gameId) => {
     state.gameId = gameId;
+    state.opponentFound = true;
     setStatus("placement", "Adversar gasit! Plaseaza-ti avioanele.");
+    refreshConfirmButtonAvailability();
+    updatePlacementInfo();
   });
   state.cancelQuickMatch = cancel;
 });
@@ -94,6 +99,7 @@ document.getElementById("btn-create-room").addEventListener("click", async () =>
   const gameId = await MP.createPrivateRoom(state.uid, state.name, password);
   state.mode = "pvp";
   state.gameId = gameId;
+  state.opponentFound = false; // still waiting for a second player to join
   document.getElementById("room-code-display").textContent =
     `Cod camera: ${gameId} — trimite-l adversarului.`;
   waitForOpponentThenPlace(gameId);
@@ -106,6 +112,7 @@ document.getElementById("btn-join-room").addEventListener("click", async () => {
     await MP.joinPrivateRoom(code, state.uid, state.name, password);
     state.mode = "pvp";
     state.gameId = code;
+    state.opponentFound = true; // joining an existing room means the opponent is already there
     startPlacement(true);
   } catch (err) {
     document.getElementById("private-room-error").textContent = err.message;
@@ -116,6 +123,7 @@ function waitForOpponentThenPlace(gameId) {
   const unsub = MP.listenToGame(gameId, (data) => {
     if (data.status === "placing" || data.order.length === 2) {
       unsub();
+      state.opponentFound = true;
       startPlacement(true);
     }
   });
@@ -129,6 +137,7 @@ function startPlacement(isMultiplayer = false) {
   state.rotation = 0;
   showScreen("placement");
   updatePlacementInfo();
+  refreshConfirmButtonAvailability();
 
   const container = document.getElementById("placement-board-container");
   if (!container.dataset.hoverBound) {
@@ -151,7 +160,11 @@ function updatePlacementInfo() {
   const count = state.myShips.length;
   const infoEl = document.getElementById("placement-info");
   if (count >= SHIPS_PER_PLAYER) {
-    infoEl.textContent = `Ai plasat toate cele ${SHIPS_PER_PLAYER} avioane. Apasa "Confirma plasarea" cand esti gata.`;
+    if (state.mode === "pvp" && !state.opponentFound) {
+      infoEl.textContent = `Ai plasat toate cele ${SHIPS_PER_PLAYER} avioane. Asteptam sa se gaseasca un adversar inainte sa poti confirma.`;
+    } else {
+      infoEl.textContent = `Ai plasat toate cele ${SHIPS_PER_PLAYER} avioane. Apasa "Confirma plasarea" cand esti gata.`;
+    }
   } else {
     infoEl.textContent =
       `Plaseaza ${SHIP_LABELS[count]} avion (${count}/${SHIPS_PER_PLAYER}). ` +
@@ -184,20 +197,39 @@ function drawPlacementBoard() {
     hoverCells,
     onCellClick: (r, c) => {
       if (state.myShips.length >= SHIPS_PER_PLAYER) return;
+
+      // First tap on a cell (or a different cell than the current preview)
+      // just moves the preview there — this is what makes placement usable
+      // on touch screens, which have no hover. Tapping the SAME cell again
+      // confirms the placement. On desktop this still feels like one click,
+      // since mousemove already moved the preview here before you clicked.
+      const isSameAsPreview = hoverAnchor && hoverAnchor[0] === r && hoverAnchor[1] === c;
+      if (!isSameAsPreview) {
+        hoverAnchor = [r, c];
+        drawPlacementBoard();
+        return;
+      }
+
       if (!isPlacementValid(r, c, state.rotation, shipCellSet, BOARD_SIZE)) return;
       const cells = getShipCells(r, c, state.rotation);
       state.myShips.push({ cells, headCell: cells[0] });
       hoverAnchor = null;
       drawPlacementBoard();
       updatePlacementInfo();
-      if (state.myShips.length === SHIPS_PER_PLAYER) {
-        document.getElementById("btn-confirm-placement").disabled = false;
-      }
+      refreshConfirmButtonAvailability();
     },
   });
 
   if (hoverInvalid) container.classList.add("invalid-preview");
   else container.classList.remove("invalid-preview");
+}
+
+// The confirm button needs BOTH: all ships placed AND (for PvP) an opponent
+// already matched — otherwise gameId is still null and submitting would crash.
+function refreshConfirmButtonAvailability() {
+  const shipsReady = state.myShips.length === SHIPS_PER_PLAYER;
+  const opponentReady = state.mode !== "pvp" || state.opponentFound;
+  document.getElementById("btn-confirm-placement").disabled = !(shipsReady && opponentReady);
 }
 
 function rotateShip() {
@@ -216,7 +248,7 @@ document.addEventListener("keydown", (e) => {
 document.getElementById("btn-undo-ship").addEventListener("click", () => {
   if (state.myShips.length === 0) return;
   state.myShips.pop();
-  document.getElementById("btn-confirm-placement").disabled = true;
+  refreshConfirmButtonAvailability();
   drawPlacementBoard();
   updatePlacementInfo();
 });
@@ -250,6 +282,7 @@ function cleanupGameState() {
   state.gameId = null;
   state.lastGameStatus = null;
   state.aiMoveScheduled = false;
+  state.opponentFound = false;
 }
 
 document.getElementById("btn-new-game").addEventListener("click", () => {
