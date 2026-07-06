@@ -143,6 +143,22 @@ export async function submitShipPlacement(gameId, uid, ships) {
   await setDoc(doc(db, GAMES, gameId, "private", uid), { ships: serializeShips(ships) });
   const gameRef = doc(db, GAMES, gameId);
   await updateDoc(gameRef, { [`ready.${uid}`]: true });
+
+  // If everyone is now ready, flip the game from "placing" to "playing" and
+  // pick a random starting player. A transaction keeps two clients racing to
+  // do this at the same moment from double-flipping it.
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(gameRef);
+    const data = snap.data();
+    if (data.status === "playing" || data.status === "finished") return;
+    if (data.order.length !== 2) return; // still waiting for a second player
+
+    const allReady = data.order.every((playerUid) => playerUid === uid || data.ready?.[playerUid]);
+    if (allReady) {
+      const startingPlayer = data.order[Math.floor(Math.random() * data.order.length)];
+      tx.update(gameRef, { status: "playing", turn: startingPlayer });
+    }
+  });
 }
 
 /** Subscribes to the shared game document. Calls back on every change. */
