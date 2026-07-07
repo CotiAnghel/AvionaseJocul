@@ -46,36 +46,56 @@ document.getElementById("login-form").addEventListener("submit", async (e) => {
   const user = await ensureSignedIn();
   state.uid = user.uid;
 
+  // Presence heartbeat: lets everyone see a live "players online" count.
+  MP.heartbeatPresence(state.uid, state.name).catch(() => {});
+  state.presenceInterval = setInterval(() => {
+    MP.heartbeatPresence(state.uid, state.name).catch(() => {});
+  }, 20000);
+  MP.listenOnlineCount((count) => {
+    const el = document.getElementById("online-count");
+    if (el) el.textContent = `${count} ${count === 1 ? "jucator" : "jucatori"} online`;
+  });
+
+  // Global chat.
+  MP.listenChat((messages) => renderChat(messages));
+
   showScreen("menu");
 });
 
 // ---------- MENU ----------
 document.getElementById("btn-vs-ai").addEventListener("click", () => {
+  showMenuNotice("");
   state.mode = "ai";
   state.opponentFound = true; // no matchmaking needed
   startPlacement();
 });
 
 document.getElementById("btn-vs-player").addEventListener("click", async () => {
+  showMenuNotice("");
   state.mode = "pvp";
+  state.matchMethod = "quickMatch";
   state.opponentFound = false;
-  setStatus("placement", "Se cauta un adversar...");
-  showScreen("placement");
-  document.getElementById("placement-board-container").innerHTML =
-    '<p class="hint">Cautam un jucator... poti pregati avioanele intre timp, jocul incepe cand se gaseste un adversar.</p>';
   startPlacement(true);
+  await searchForOpponent();
+});
 
+/** Starts (or restarts) a quick-match search. Stays on the placement screen. */
+async function searchForOpponent() {
+  setStatus("placement", "Se cauta un adversar...");
+  updatePlacementInfo();
   const cancel = await MP.quickMatch(state.uid, state.name, (gameId) => {
     state.gameId = gameId;
     state.opponentFound = true;
     setStatus("placement", "Adversar gasit! Plaseaza-ti avioanele.");
     refreshConfirmButtonAvailability();
     updatePlacementInfo();
+    subscribeMultiplayerGame(); // listen from now on, so we catch it if the opponent leaves before we've both confirmed
   });
   state.cancelQuickMatch = cancel;
-});
+}
 
 document.getElementById("btn-private-room").addEventListener("click", () => {
+  showMenuNotice("");
   showScreen("privateRoom");
 });
 
@@ -87,9 +107,12 @@ document.getElementById("btn-back-to-menu-from-room").addEventListener("click", 
   showScreen("menu");
 });
 
-document.getElementById("btn-back-to-menu-from-placement").addEventListener("click", () => {
-  // Cancels any pending "quick match" search or abandons an unfinished
-  // placement — nothing has actually started yet, so no confirmation needed.
+document.getElementById("btn-back-to-menu-from-placement").addEventListener("click", async () => {
+  // If we'd already been matched with someone, tell them we're leaving so
+  // they don't get stuck waiting forever for a placement that never comes.
+  if (state.mode === "pvp" && state.gameId) {
+    await MP.abandonDuringPlacement(state.gameId, state.uid).catch(() => {});
+  }
   cleanupGameState();
   showScreen("menu");
 });
@@ -98,10 +121,12 @@ document.getElementById("btn-create-room").addEventListener("click", async () =>
   const password = document.getElementById("room-password-input").value.trim();
   const gameId = await MP.createPrivateRoom(state.uid, state.name, password);
   state.mode = "pvp";
+  state.matchMethod = "privateRoom";
   state.gameId = gameId;
   state.opponentFound = false; // still waiting for a second player to join
   document.getElementById("room-code-display").textContent =
     `Cod camera: ${gameId} — trimite-l adversarului.`;
+  subscribeMultiplayerGame();
   waitForOpponentThenPlace(gameId);
 });
 
@@ -111,8 +136,10 @@ document.getElementById("btn-join-room").addEventListener("click", async () => {
   try {
     await MP.joinPrivateRoom(code, state.uid, state.name, password);
     state.mode = "pvp";
+    state.matchMethod = "privateRoom";
     state.gameId = code;
     state.opponentFound = true; // joining an existing room means the opponent is already there
+    subscribeMultiplayerGame();
     startPlacement(true);
   } catch (err) {
     document.getElementById("private-room-error").textContent = err.message;
@@ -159,8 +186,9 @@ function startPlacement(isMultiplayer = false) {
 function updatePlacementInfo() {
   const count = state.myShips.length;
   const infoEl = document.getElementById("placement-info");
+  const searching = state.mode === "pvp" && !state.opponentFound;
   if (count >= SHIPS_PER_PLAYER) {
-    if (state.mode === "pvp" && !state.opponentFound) {
+    if (searching) {
       infoEl.textContent = `Ai plasat toate cele ${SHIPS_PER_PLAYER} avioane. Asteptam sa se gaseasca un adversar inainte sa poti confirma.`;
     } else {
       infoEl.textContent = `Ai plasat toate cele ${SHIPS_PER_PLAYER} avioane. Apasa "Confirma plasarea" cand esti gata.`;
@@ -169,7 +197,8 @@ function updatePlacementInfo() {
     infoEl.textContent =
       `Plaseaza ${SHIP_LABELS[count]} avion (${count}/${SHIPS_PER_PLAYER}). ` +
       `Muta mouse-ul pe harta pentru previzualizare, click pentru a plasa. ` +
-      `Foloseste butonul "Roteste" (sau tasta R) ca sa schimbi orientarea inainte de a plasa.`;
+      `Foloseste butonul "Roteste" (sau tasta R) ca sa schimbi orientarea inainte de a plasa.` +
+      (searching ? " (Cautam un adversar in fundal...)" : "");
   }
 }
 
@@ -261,7 +290,6 @@ document.getElementById("btn-confirm-placement").addEventListener("click", async
   } else {
     await MP.submitShipPlacement(state.gameId, state.uid, state.myShips);
     document.getElementById("placement-info").textContent = "Asteptam ca adversarul sa termine plasarea...";
-    subscribeMultiplayerGame();
   }
 });
 
@@ -286,6 +314,7 @@ function cleanupGameState() {
   state.aiMoveScheduled = false;
   state.opponentFound = false;
   state.opponentUid = null;
+  state.matchMethod = null;
   state.resultAnimationPlayedForGameId = null;
 }
 
@@ -384,6 +413,7 @@ function finishLocalGame() {
 
 // ---------- MULTIPLAYER GAME ----------
 function subscribeMultiplayerGame() {
+  if (state.unsubGame) { state.unsubGame(); state.unsubGame = null; }
   state.unsubGame = MP.listenToGame(state.gameId, (data) => processGameSnapshot(data));
   startPvpPolling();
 }
@@ -410,13 +440,43 @@ function stopPvpPolling() {
 }
 
 async function processGameSnapshot(data) {
-  if (data.status === "playing" && !screens.game.classList.contains("active")) {
+  // The opponent backed out before the game actually started (during ship
+  // placement). For quick-match games we auto-restart the search (keeping
+  // whatever ships are already placed); for private rooms there's no one
+  // else to auto-pair with, so we just explain and send the player back.
+  if (data.status === "abandoned") {
+    if (state.matchMethod === "quickMatch") {
+      await restartSearchAfterOpponentLeft();
+    } else {
+      cleanupGameState();
+      showMenuNotice("Adversarul a parasit inainte de inceperea jocului.");
+      showScreen("menu");
+    }
+    return;
+  }
+
+  // Nothing else to do until the game has actually started.
+  if (data.status !== "playing" && data.status !== "finished") return;
+
+  if (!screens.game.classList.contains("active")) {
     showScreen("game");
   }
   if (data.order.includes(state.uid)) {
     await MP.resolvePendingShotIfMine(state.gameId, state.uid, data);
   }
   renderMultiplayerGameState(data);
+}
+
+/** Opponent left during placement — stay put, keep our ships, and look for someone else. */
+async function restartSearchAfterOpponentLeft() {
+  if (state.unsubGame) { state.unsubGame(); state.unsubGame = null; }
+  stopPvpPolling();
+  state.gameId = null;
+  state.opponentFound = false;
+  refreshConfirmButtonAvailability();
+  setStatus("placement", "Adversarul a parasit jocul. Cautam un alt adversar...");
+  updatePlacementInfo();
+  await searchForOpponent();
 }
 
 document.getElementById("btn-refresh-game").addEventListener("click", async () => {
@@ -493,6 +553,52 @@ function setStatus(screenKey, text) {
   const el = document.getElementById(`${screenKey}-status-text`);
   if (el) el.textContent = text;
 }
+
+function showMenuNotice(text) {
+  const el = document.getElementById("menu-notice");
+  if (el) el.textContent = text;
+}
+
+// ---------- GLOBAL CHAT (mIRC-style) ----------
+function nameColor(uid) {
+  // Deterministic color per uid, so the same person always gets the same
+  // "nickname color" — a small mIRC-style touch.
+  let hash = 0;
+  for (let i = 0; i < uid.length; i++) hash = (hash * 31 + uid.charCodeAt(i)) % 360;
+  return `hsl(${hash}, 70%, 65%)`;
+}
+
+function renderChat(messages) {
+  const container = document.getElementById("chat-messages");
+  if (!container) return;
+  const wasScrolledToBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 30;
+
+  container.innerHTML = messages.map((m) => {
+    const time = m.createdAt?.toDate
+      ? m.createdAt.toDate().toLocaleTimeString("ro-RO", { hour: "2-digit", minute: "2-digit" })
+      : "--:--";
+    const safeName = escapeHtml(m.name || "?");
+    const safeText = escapeHtml(m.text || "");
+    return `<div class="chat-line"><span class="chat-time">[${time}]</span> <span class="chat-name" style="color:${nameColor(m.uid || "")}">&lt;${safeName}&gt;</span> ${safeText}</div>`;
+  }).join("");
+
+  if (wasScrolledToBottom) container.scrollTop = container.scrollHeight;
+}
+
+function escapeHtml(str) {
+  const div = document.createElement("div");
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+document.getElementById("chat-form")?.addEventListener("submit", (e) => {
+  e.preventDefault();
+  const input = document.getElementById("chat-input");
+  const text = input.value.trim();
+  if (!text || !state.uid) return;
+  MP.sendChatMessage(state.uid, state.name, text).catch(() => {});
+  input.value = "";
+});
 
 // ---------- WIN/LOSS VISUALS ----------
 function showGameResult(won, reasonText) {

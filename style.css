@@ -311,6 +311,61 @@ kbd {
   animation-fill-mode: forwards;
 }
 
+/* ---------- Online count + mIRC-style chat ---------- */
+.online-count {
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  color: var(--radar-green);
+  margin-top: 16px;
+  margin-bottom: 0;
+}
+
+.chat-panel {
+  margin-top: 16px;
+}
+
+.chat-messages {
+  height: 220px;
+  overflow-y: auto;
+  background: var(--bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 4px;
+  padding: 8px 10px;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.chat-line {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.chat-time {
+  color: var(--text-dim);
+}
+
+.chat-name {
+  font-weight: 700;
+}
+
+.chat-form {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.chat-form input {
+  flex: 1;
+}
+
+.chat-form button {
+  width: auto;
+  margin-top: 0;
+  white-space: nowrap;
+}
+
 .boards-row {
   display: flex;
   flex-wrap: wrap;

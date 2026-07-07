@@ -19,7 +19,7 @@
 import { db } from "./firebase-init.js";
 import {
   collection, doc, setDoc, getDoc, updateDoc, deleteDoc, addDoc,
-  query, where, limit, getDocs, onSnapshot, runTransaction, serverTimestamp,
+  query, where, limit, orderBy, getDocs, onSnapshot, runTransaction, serverTimestamp,
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 import { SHIPS_PER_PLAYER } from "./ship-shapes.js";
 
@@ -250,4 +250,64 @@ export async function forfeitGame(gameId, myUid, opponentUid) {
     endReason: "left",
     pendingShot: null,
   });
+}
+
+/**
+ * Called when a player backs out during ship placement (before the game has
+ * actually started). Marks the game as abandoned so the other player (who
+ * may still be placing ships, or waiting) finds out instead of being stuck
+ * forever with an opponent who never shows up.
+ */
+export async function abandonDuringPlacement(gameId, uid) {
+  const ref = doc(db, GAMES, gameId);
+  try {
+    await runTransaction(db, async (tx) => {
+      const snap = await tx.get(ref);
+      const data = snap.data();
+      if (!data || data.status === "playing" || data.status === "finished" || data.status === "abandoned") return;
+      tx.update(ref, { status: "abandoned", abandonedBy: uid });
+    });
+  } catch (e) {
+    // best effort — if this fails, the other player can still leave manually
+  }
+}
+
+// ---------- PRESENCE (online player count) ----------
+const PRESENCE = "presence";
+const ONLINE_WINDOW_MS = 60000; // considered "online" if a heartbeat landed in the last 60s
+
+/** Writes/refreshes this player's presence heartbeat. Call this periodically. */
+export async function heartbeatPresence(uid, name) {
+  await setDoc(doc(db, PRESENCE, uid), { name, lastSeen: serverTimestamp() });
+}
+
+/** Live count of players active in the last minute. */
+export function listenOnlineCount(callback) {
+  return onSnapshot(collection(db, PRESENCE), (snap) => {
+    const now = Date.now();
+    const count = snap.docs.filter((d) => {
+      const ts = d.data().lastSeen;
+      if (!ts || typeof ts.toMillis !== "function") return false;
+      return now - ts.toMillis() < ONLINE_WINDOW_MS;
+    }).length;
+    callback(count);
+  });
+}
+
+// ---------- GLOBAL CHAT (mIRC-style) ----------
+const CHAT = "chat";
+
+/** Live feed of the last 50 chat messages, oldest first. */
+export function listenChat(callback) {
+  const q = query(collection(db, CHAT), orderBy("createdAt", "desc"), limit(50));
+  return onSnapshot(q, (snap) => {
+    const messages = snap.docs.map((d) => d.data()).reverse();
+    callback(messages);
+  });
+}
+
+export async function sendChatMessage(uid, name, text) {
+  const trimmed = text.trim().slice(0, 200);
+  if (!trimmed) return;
+  await addDoc(collection(db, CHAT), { uid, name, text: trimmed, createdAt: serverTimestamp() });
 }

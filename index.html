@@ -31,6 +31,7 @@
     <div class="panel">
       <button id="btn-back-to-login" class="btn-back">&larr; Inapoi</button>
       <h2>Alege modul de joc</h2>
+      <p id="menu-notice" class="hint error"></p>
 
       <div class="difficulty-select">
         <p>Dificultate (pentru joc vs calculator):</p>
@@ -42,6 +43,17 @@
       <button id="btn-vs-ai" class="btn-primary">Joc vs Calculator</button>
       <button id="btn-vs-player" class="btn-secondary">Cauta un adversar (PvP)</button>
       <button id="btn-private-room" class="btn-secondary">Camera privata (invitatie)</button>
+
+      <p id="online-count" class="online-count"></p>
+    </div>
+
+    <div class="panel chat-panel">
+      <h2>Chat global</h2>
+      <div id="chat-messages" class="chat-messages"></div>
+      <form id="chat-form" class="chat-form">
+        <input id="chat-input" type="text" maxlength="200" placeholder="Scrie un mesaj...">
+        <button type="submit" class="btn-primary btn-small">Trimite</button>
+      </form>
     </div>
   </section>
 
