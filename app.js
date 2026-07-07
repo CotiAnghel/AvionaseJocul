@@ -364,16 +364,24 @@ function finishLocalGame() {
 
 // ---------- MULTIPLAYER GAME ----------
 function subscribeMultiplayerGame() {
-  state.unsubGame = MP.listenToGame(state.gameId, async (data) => {
-    if (data.status === "playing" && !screens.game.classList.contains("active")) {
-      showScreen("game");
-    }
-    if (data.order.includes(state.uid)) {
-      await MP.resolvePendingShotIfMine(state.gameId, state.uid, data);
-    }
-    renderMultiplayerGameState(data);
-  });
+  state.unsubGame = MP.listenToGame(state.gameId, (data) => processGameSnapshot(data));
 }
+
+async function processGameSnapshot(data) {
+  if (data.status === "playing" && !screens.game.classList.contains("active")) {
+    showScreen("game");
+  }
+  if (data.order.includes(state.uid)) {
+    await MP.resolvePendingShotIfMine(state.gameId, state.uid, data);
+  }
+  renderMultiplayerGameState(data);
+}
+
+document.getElementById("btn-refresh-game").addEventListener("click", async () => {
+  if (state.mode !== "pvp" || !state.gameId) return;
+  const data = await MP.fetchGameOnce(state.gameId);
+  if (data) await processGameSnapshot(data);
+});
 
 function renderMultiplayerGameState(data) {
   state.lastGameStatus = data.status;

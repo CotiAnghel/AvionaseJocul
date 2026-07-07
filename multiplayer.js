@@ -163,9 +163,26 @@ export async function submitShipPlacement(gameId, uid, ships) {
 
 /** Subscribes to the shared game document. Calls back on every change. */
 export function listenToGame(gameId, callback) {
-  return onSnapshot(doc(db, GAMES, gameId), (snap) => {
-    if (snap.exists()) callback(snap.data());
-  });
+  return onSnapshot(
+    doc(db, GAMES, gameId),
+    (snap) => { if (snap.exists()) callback(snap.data()); },
+    (error) => {
+      // Surfaces connection issues (e.g. a browser extension blocking
+      // Firestore's realtime channel) instead of failing silently.
+      console.error("Game listener error (realtime sync may be blocked):", error);
+    },
+  );
+}
+
+/**
+ * One-off manual fetch of the current game state — a fallback for when the
+ * live listener's connection has been interrupted (e.g. by a browser
+ * extension blocking Firestore's realtime channel) and isn't delivering
+ * fresh updates.
+ */
+export async function fetchGameOnce(gameId) {
+  const snap = await getDoc(doc(db, GAMES, gameId));
+  return snap.exists() ? snap.data() : null;
 }
 
 /** Fires a shot at the opponent (only valid on your turn, and only if no shot is already pending). */
