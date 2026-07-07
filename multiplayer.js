@@ -133,6 +133,7 @@ async function createGameDoc(gameId, players, password = null) {
     hits: {},           // hits[defenderUid]["r,c"] = "miss" | "hit" | "head"
     destroyedCount: {}, // destroyedCount[uid] = number of that player's planes destroyed
     winner: null,
+    endReason: null, // "destroyed" | "left" — set once the game finishes
     password,
     createdAt: serverTimestamp(),
   });
@@ -234,5 +235,19 @@ export async function resolvePendingShotIfMine(gameId, myUid, gameData) {
     turn: myUid, // pass the turn to whoever just got shot at — they attack next
     status: iLost ? "finished" : "playing",
     winner: iLost ? shot.by : null,
+    endReason: iLost ? "destroyed" : null,
+  });
+}
+
+/**
+ * Called when a player deliberately quits/abandons a match that hasn't
+ * finished yet — the opponent is declared the winner by forfeit.
+ */
+export async function forfeitGame(gameId, myUid, opponentUid) {
+  await updateDoc(doc(db, GAMES, gameId), {
+    status: "finished",
+    winner: opponentUid,
+    endReason: "left",
+    pendingShot: null,
   });
 }

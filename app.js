@@ -256,6 +256,7 @@ document.getElementById("btn-undo-ship").addEventListener("click", () => {
 document.getElementById("btn-confirm-placement").addEventListener("click", async () => {
   if (state.mode === "ai") {
     state.localGame = new LocalGame(state.myShips, state.difficulty);
+    state.localResultShown = false;
     enterGameScreen();
   } else {
     await MP.submitShipPlacement(state.gameId, state.uid, state.myShips);
@@ -278,17 +279,29 @@ function isGameUnfinished() {
 function cleanupGameState() {
   if (state.unsubGame) { state.unsubGame(); state.unsubGame = null; }
   if (state.cancelQuickMatch) { state.cancelQuickMatch(); state.cancelQuickMatch = null; }
+  stopPvpPolling();
   state.localGame = null;
   state.gameId = null;
   state.lastGameStatus = null;
   state.aiMoveScheduled = false;
   state.opponentFound = false;
+  state.opponentUid = null;
+  state.resultAnimationPlayedForGameId = null;
 }
 
-document.getElementById("btn-new-game").addEventListener("click", () => {
+// If leaving an unfinished PvP game, tell the opponent so they win by
+// forfeit instead of being left waiting forever.
+async function forfeitActivePvpGameIfNeeded() {
+  if (state.mode === "pvp" && state.gameId && state.opponentUid && isGameUnfinished()) {
+    try { await MP.forfeitGame(state.gameId, state.uid, state.opponentUid); } catch (e) { /* best effort */ }
+  }
+}
+
+document.getElementById("btn-new-game").addEventListener("click", async () => {
   if (isGameUnfinished() && !confirm("Jocul curent nu s-a terminat inca. Daca incepi un joc nou, vei pierde partida in desfasurare. Continui?")) {
     return;
   }
+  await forfeitActivePvpGameIfNeeded();
   const mode = state.mode;
   const difficulty = state.difficulty;
   cleanupGameState();
@@ -301,10 +314,11 @@ document.getElementById("btn-new-game").addEventListener("click", () => {
   }
 });
 
-document.getElementById("btn-quit-game").addEventListener("click", () => {
+document.getElementById("btn-quit-game").addEventListener("click", async () => {
   if (isGameUnfinished() && !confirm("Jocul curent nu s-a terminat inca. Daca inchizi, abandonezi partida. Continui?")) {
     return;
   }
+  await forfeitActivePvpGameIfNeeded();
   cleanupGameState();
   showScreen("menu");
 });
@@ -358,13 +372,41 @@ function driveAIIfNeeded() {
 }
 
 function finishLocalGame() {
-  document.getElementById("game-status").textContent =
-    state.localGame.winner === "player" ? "Ai castigat!" : "Calculatorul a castigat.";
+  if (state.localResultShown) return;
+  state.localResultShown = true;
+  const won = state.localGame.winner === "player";
+  showGameResult(
+    won,
+    won ? "Ai distrus toate cele 3 avioane ale calculatorului."
+        : "Calculatorul ti-a distrus toate cele 3 avioane.",
+  );
 }
 
 // ---------- MULTIPLAYER GAME ----------
 function subscribeMultiplayerGame() {
   state.unsubGame = MP.listenToGame(state.gameId, (data) => processGameSnapshot(data));
+  startPvpPolling();
+}
+
+// Safety net alongside the live listener: if the realtime connection gets
+// silently blocked (e.g. by a browser extension intercepting Firestore's
+// webchannel), this catches up the game state every few seconds regardless.
+function startPvpPolling() {
+  stopPvpPolling();
+  state.pvpPollInterval = setInterval(async () => {
+    if (state.mode !== "pvp" || !state.gameId) return;
+    try {
+      const data = await MP.fetchGameOnce(state.gameId);
+      if (data) await processGameSnapshot(data);
+    } catch (e) { /* transient network error — will retry on the next tick */ }
+  }, 4000);
+}
+
+function stopPvpPolling() {
+  if (state.pvpPollInterval) {
+    clearInterval(state.pvpPollInterval);
+    state.pvpPollInterval = null;
+  }
 }
 
 async function processGameSnapshot(data) {
@@ -393,6 +435,7 @@ function renderMultiplayerGameState(data) {
   }
 
   const opponentUid = data.order.find((u) => u !== state.uid);
+  state.opponentUid = opponentUid;
   const myHitsReceived = data.hits?.[state.uid] || {};
   const opponentHitsReceived = data.hits?.[opponentUid] || {};
 
@@ -427,7 +470,17 @@ function renderMultiplayerGameState(data) {
 
   let statusText = "";
   if (data.status === "finished") {
-    statusText = data.winner === state.uid ? "Ai castigat!" : "Ai pierdut.";
+    if (state.resultAnimationPlayedForGameId !== state.gameId) {
+      state.resultAnimationPlayedForGameId = state.gameId;
+      const won = data.winner === state.uid;
+      const reason = data.endReason === "left"
+        ? "Adversarul a parasit jocul."
+        : won
+          ? "Ai distrus toate cele 3 avioane ale adversarului."
+          : "Toate cele 3 avioane ale tale au fost distruse.";
+      showGameResult(won, reason);
+    }
+    return;
   } else if (data.turn === state.uid) {
     statusText = "Randul tau — ataca!";
   } else {
@@ -439,6 +492,53 @@ function renderMultiplayerGameState(data) {
 function setStatus(screenKey, text) {
   const el = document.getElementById(`${screenKey}-status-text`);
   if (el) el.textContent = text;
+}
+
+// ---------- WIN/LOSS VISUALS ----------
+function showGameResult(won, reasonText) {
+  const statusEl = document.getElementById("game-status");
+  statusEl.innerHTML = "";
+  const banner = document.createElement("div");
+  banner.className = `result-banner ${won ? "win" : "lose"}`;
+  banner.innerHTML = `
+    <div class="result-title">${won ? "\u{1F3C6} Ai castigat!" : "\u{1F4A5} Ai pierdut."}</div>
+    <div class="result-reason">${reasonText}</div>
+  `;
+  statusEl.appendChild(banner);
+
+  if (won) launchConfetti(); else launchDebris();
+}
+
+function launchConfetti() {
+  const overlay = document.createElement("div");
+  overlay.className = "fx-overlay";
+  document.body.appendChild(overlay);
+  const colors = ["#39ff14", "#4cc9f0", "#f72585", "#ffb703", "#ffffff"];
+  for (let i = 0; i < 70; i++) {
+    const piece = document.createElement("div");
+    piece.className = "confetti-piece";
+    piece.style.left = `${Math.random() * 100}vw`;
+    piece.style.background = colors[Math.floor(Math.random() * colors.length)];
+    piece.style.animationDelay = `${(Math.random() * 0.5).toFixed(2)}s`;
+    piece.style.animationDuration = `${(1.8 + Math.random() * 1.4).toFixed(2)}s`;
+    overlay.appendChild(piece);
+  }
+  setTimeout(() => overlay.remove(), 3600);
+}
+
+function launchDebris() {
+  const overlay = document.createElement("div");
+  overlay.className = "fx-overlay";
+  document.body.appendChild(overlay);
+  for (let i = 0; i < 40; i++) {
+    const piece = document.createElement("div");
+    piece.className = "debris-piece";
+    piece.style.left = `${Math.random() * 100}vw`;
+    piece.style.animationDelay = `${(Math.random() * 0.5).toFixed(2)}s`;
+    piece.style.animationDuration = `${(1.6 + Math.random() * 1.2).toFixed(2)}s`;
+    overlay.appendChild(piece);
+  }
+  setTimeout(() => overlay.remove(), 3200);
 }
 
 // TEMPORARY DEBUG HELPER — safe to remove once the turn-sync issue is
