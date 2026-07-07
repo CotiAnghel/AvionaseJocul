@@ -316,6 +316,7 @@ function cleanupGameState() {
   state.opponentUid = null;
   state.matchMethod = null;
   state.resultAnimationPlayedForGameId = null;
+  state.lastGameData = null;
 }
 
 // If leaving an unfinished PvP game, tell the opponent so they win by
@@ -418,18 +419,18 @@ function subscribeMultiplayerGame() {
   startPvpPolling();
 }
 
-// Safety net alongside the live listener: if the realtime connection gets
-// silently blocked (e.g. by a browser extension intercepting Firestore's
-// webchannel), this catches up the game state every few seconds regardless.
+// Safety net alongside the live listener, and also what drives the turn
+// countdown timer: ticks every 1.5s while a PvP game is active.
 function startPvpPolling() {
   stopPvpPolling();
   state.pvpPollInterval = setInterval(async () => {
     if (state.mode !== "pvp" || !state.gameId) return;
+    tickTurnTimer();
     try {
       const data = await MP.fetchGameOnce(state.gameId);
       if (data) await processGameSnapshot(data);
     } catch (e) { /* transient network error — will retry on the next tick */ }
-  }, 4000);
+  }, 1500);
 }
 
 function stopPvpPolling() {
@@ -458,13 +459,33 @@ async function processGameSnapshot(data) {
   // Nothing else to do until the game has actually started.
   if (data.status !== "playing" && data.status !== "finished") return;
 
+  state.lastGameData = data;
+
   if (!screens.game.classList.contains("active")) {
     showScreen("game");
   }
   if (data.order.includes(state.uid)) {
     await MP.resolvePendingShotIfMine(state.gameId, state.uid, data);
   }
+  if (data.status === "playing") {
+    await MP.expireTurnIfNeeded(state.gameId, data);
+  }
   renderMultiplayerGameState(data);
+}
+
+/** Updates the on-screen countdown every tick, without waiting for a fresh snapshot. */
+function tickTurnTimer() {
+  const data = state.lastGameData;
+  const timerEl = document.getElementById("turn-timer");
+  if (!timerEl || !data || data.status !== "playing" || !data.turnStartedAt?.toMillis) {
+    if (timerEl) timerEl.textContent = "";
+    return;
+  }
+  const remainingMs = MP.TURN_TIME_LIMIT_MS - (Date.now() - data.turnStartedAt.toMillis());
+  const remainingSec = Math.max(0, Math.ceil(remainingMs / 1000));
+  const whoseTurn = data.turn === state.uid ? "Timpul tau" : "Timpul adversarului";
+  timerEl.textContent = `${whoseTurn}: ${remainingSec}s`;
+  timerEl.classList.toggle("turn-timer-low", remainingSec <= 10);
 }
 
 /** Opponent left during placement — stay put, keep our ships, and look for someone else. */
@@ -478,12 +499,6 @@ async function restartSearchAfterOpponentLeft() {
   updatePlacementInfo();
   await searchForOpponent();
 }
-
-document.getElementById("btn-refresh-game").addEventListener("click", async () => {
-  if (state.mode !== "pvp" || !state.gameId) return;
-  const data = await MP.fetchGameOnce(state.gameId);
-  if (data) await processGameSnapshot(data);
-});
 
 function renderMultiplayerGameState(data) {
   state.lastGameStatus = data.status;

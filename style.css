@@ -321,6 +321,18 @@ kbd {
   margin-bottom: 0;
 }
 
+.turn-timer {
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  min-height: 1.2em;
+}
+.turn-timer.turn-timer-low {
+  color: var(--hit-red);
+  font-weight: 700;
+}
+
 .chat-panel {
   margin-top: 16px;
 }

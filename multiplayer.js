@@ -26,6 +26,9 @@ import { SHIPS_PER_PLAYER } from "./ship-shapes.js";
 const LOBBY = "lobby";
 const GAMES = "games";
 
+// How long a player has to make a move before the turn auto-passes.
+export const TURN_TIME_LIMIT_MS = 30000;
+
 // Firestore rejects nested arrays (an array of [r,c] arrays), so ship data is
 // converted to/from {r,c} objects right at the Firestore boundary. Every
 // other module keeps using plain [r,c] tuples internally.
@@ -129,6 +132,7 @@ async function createGameDoc(gameId, players, password = null) {
     status: players.length === 2 ? "placing" : "waiting-for-opponent",
     ready: {},
     turn: players[0].uid,
+    turnStartedAt: serverTimestamp(),
     pendingShot: null,
     hits: {},           // hits[defenderUid]["r,c"] = "miss" | "hit" | "head"
     destroyedCount: {}, // destroyedCount[uid] = number of that player's planes destroyed
@@ -157,7 +161,7 @@ export async function submitShipPlacement(gameId, uid, ships) {
     const allReady = data.order.every((playerUid) => playerUid === uid || data.ready?.[playerUid]);
     if (allReady) {
       const startingPlayer = data.order[Math.floor(Math.random() * data.order.length)];
-      tx.update(gameRef, { status: "playing", turn: startingPlayer });
+      tx.update(gameRef, { status: "playing", turn: startingPlayer, turnStartedAt: serverTimestamp() });
     }
   });
 }
@@ -184,6 +188,34 @@ export function listenToGame(gameId, callback) {
 export async function fetchGameOnce(gameId) {
   const snap = await getDoc(doc(db, GAMES, gameId));
   return snap.exists() ? snap.data() : null;
+}
+
+/**
+ * If the current player's time to move has run out, passes the turn to the
+ * other player. Safe to call from either client — a transaction with a
+ * freshness re-check keeps it from double-firing.
+ */
+export async function expireTurnIfNeeded(gameId, data) {
+  if (data.status !== "playing" || !data.turn || !data.turnStartedAt?.toMillis) return;
+  if (Date.now() - data.turnStartedAt.toMillis() < TURN_TIME_LIMIT_MS) return;
+
+  const ref = doc(db, GAMES, gameId);
+  const timedOutUid = data.turn;
+  const nextUid = data.order.find((u) => u !== timedOutUid);
+  if (!nextUid) return;
+
+  try {
+    await runTransaction(db, async (tx) => {
+      const snap = await tx.get(ref);
+      const fresh = snap.data();
+      if (!fresh || fresh.status !== "playing" || fresh.turn !== timedOutUid) return; // already changed
+      if (!fresh.turnStartedAt?.toMillis) return;
+      if (Date.now() - fresh.turnStartedAt.toMillis() < TURN_TIME_LIMIT_MS) return;
+      tx.update(ref, { turn: nextUid, turnStartedAt: serverTimestamp(), pendingShot: null });
+    });
+  } catch (e) {
+    // best effort — the other client (or the next tick) will catch it
+  }
 }
 
 /** Fires a shot at the opponent (only valid on your turn, and only if no shot is already pending). */
@@ -233,6 +265,7 @@ export async function resolvePendingShotIfMine(gameId, myUid, gameData) {
     [`destroyedCount.${myUid}`]: destroyedCount,
     pendingShot: null,
     turn: myUid, // pass the turn to whoever just got shot at — they attack next
+    turnStartedAt: serverTimestamp(),
     status: iLost ? "finished" : "playing",
     winner: iLost ? shot.by : null,
     endReason: iLost ? "destroyed" : null,
