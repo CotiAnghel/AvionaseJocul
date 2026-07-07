@@ -464,13 +464,19 @@ async function processGameSnapshot(data) {
   if (!screens.game.classList.contains("active")) {
     showScreen("game");
   }
+
+  let effectiveData = data;
   if (data.order.includes(state.uid)) {
-    await MP.resolvePendingShotIfMine(state.gameId, state.uid, data);
+    const resolved = await MP.resolvePendingShotIfMine(state.gameId, state.uid, data);
+    if (resolved) {
+      effectiveData = resolved;
+      state.lastGameData = resolved;
+    }
   }
-  if (data.status === "playing") {
-    await MP.expireTurnIfNeeded(state.gameId, data);
+  if (effectiveData.status === "playing") {
+    await MP.expireTurnIfNeeded(state.gameId, effectiveData);
   }
-  renderMultiplayerGameState(data);
+  renderMultiplayerGameState(effectiveData);
 }
 
 /** Updates the on-screen countdown every tick, without waiting for a fresh snapshot. */
@@ -545,6 +551,8 @@ function renderMultiplayerGameState(data) {
 
   let statusText = "";
   if (data.status === "finished") {
+    const timerEl = document.getElementById("turn-timer");
+    if (timerEl) { timerEl.textContent = ""; timerEl.classList.remove("turn-timer-low"); }
     if (state.resultAnimationPlayedForGameId !== state.gameId) {
       state.resultAnimationPlayedForGameId = state.gameId;
       const won = data.winner === state.uid;

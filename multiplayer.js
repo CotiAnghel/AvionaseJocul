@@ -237,7 +237,7 @@ export async function fireShot(gameId, myUid, row, col) {
  */
 export async function resolvePendingShotIfMine(gameId, myUid, gameData) {
   const shot = gameData.pendingShot;
-  if (!shot || shot.by === myUid) return; // not aimed at me, or nothing pending
+  if (!shot || shot.by === myUid) return null; // not aimed at me, or nothing pending — nothing changed
 
   const privateSnap = await getDoc(doc(db, GAMES, gameId, "private", myUid));
   const myShips = deserializeShips(privateSnap.data().ships); // {r,c} objects -> [r,c] tuples
@@ -259,17 +259,24 @@ export async function resolvePendingShotIfMine(gameId, myUid, gameData) {
   const destroyedCount = updatedShips.filter((s) => s.destroyed).length;
   const iLost = destroyedCount >= SHIPS_PER_PLAYER;
 
-  await setDoc(doc(db, GAMES, gameId, "private", myUid), { ships: serializeShips(updatedShips) });
-  await updateDoc(doc(db, GAMES, gameId), {
-    [`hits.${myUid}.${shot.row},${shot.col}`]: result,
-    [`destroyedCount.${myUid}`]: destroyedCount,
+  const updates = {
+    hits: { ...gameData.hits, [myUid]: { ...(gameData.hits?.[myUid] || {}), [`${shot.row},${shot.col}`]: result } },
+    destroyedCount: { ...gameData.destroyedCount, [myUid]: destroyedCount },
     pendingShot: null,
     turn: myUid, // pass the turn to whoever just got shot at — they attack next
-    turnStartedAt: serverTimestamp(),
     status: iLost ? "finished" : "playing",
     winner: iLost ? shot.by : null,
     endReason: iLost ? "destroyed" : null,
-  });
+  };
+
+  await setDoc(doc(db, GAMES, gameId, "private", myUid), { ships: serializeShips(updatedShips) });
+  await updateDoc(doc(db, GAMES, gameId), { ...updates, turnStartedAt: serverTimestamp() });
+
+  // Return the up-to-date state (with an approximate turnStartedAt for
+  // immediate local rendering) so the caller doesn't render the stale
+  // pre-write data — that's what caused the losing player's screen to look
+  // frozen on "waiting for opponent" right at the moment they actually lost.
+  return { ...gameData, ...updates, turnStartedAt: { toMillis: () => Date.now() } };
 }
 
 /**
