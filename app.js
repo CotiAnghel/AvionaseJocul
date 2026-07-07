@@ -432,3 +432,9 @@ function setStatus(screenKey, text) {
   const el = document.getElementById(`${screenKey}-status-text`);
   if (el) el.textContent = text;
 }
+
+// TEMPORARY DEBUG HELPER — safe to remove once the turn-sync issue is
+// confirmed fixed. Lets you check, from the browser console, exactly what
+// this tab's session thinks its own uid/mode/gameId are, to compare against
+// what's stored in Firestore.
+window.__avionaseDebug = state;
