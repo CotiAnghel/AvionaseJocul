@@ -6,7 +6,7 @@ import { auth, ensureSignedIn } from "./firebase-init.js";
 import {
   BOARD_SIZE, renderBoard, cellLabel, createEmptyGrid, buildShipCellMap,
 } from "./board.js";
-import { SHAPES, getShipCells, isPlacementValid, cellsToSet, SHIPS_PER_PLAYER } from "./ship-shapes.js";
+import { SHAPES, getShipCells, getShapeBounds, isPlacementValid, cellsToSet, SHIPS_PER_PLAYER } from "./ship-shapes.js";
 import { LocalGame } from "./game-local.js";
 import * as MP from "./multiplayer.js";
 
@@ -16,6 +16,7 @@ const screens = {
   placement: document.getElementById("screen-placement"),
   game: document.getElementById("screen-game"),
   privateRoom: document.getElementById("screen-private-room"),
+  tournament: document.getElementById("screen-tournament"),
 };
 
 const state = {
@@ -46,14 +47,27 @@ document.getElementById("login-form").addEventListener("submit", async (e) => {
   const user = await ensureSignedIn();
   state.uid = user.uid;
 
-  // Presence heartbeat: lets everyone see a live "players online" count.
-  MP.heartbeatPresence(state.uid, state.name).catch(() => {});
+  // Presence heartbeat: lets everyone see a live "players online" count,
+  // broken down by what people are currently doing.
+  state.presenceStatus = "idle";
+  MP.heartbeatPresence(state.uid, state.name, state.presenceStatus).catch(() => {});
   state.presenceInterval = setInterval(() => {
-    MP.heartbeatPresence(state.uid, state.name).catch(() => {});
+    MP.heartbeatPresence(state.uid, state.name, state.presenceStatus).catch(() => {});
   }, 20000);
-  MP.listenOnlineCount((count) => {
+  MP.listenOnlineCount(({ online, searching, inGame }) => {
     const el = document.getElementById("online-count");
-    if (el) el.textContent = `${count} ${count === 1 ? "jucator" : "jucatori"} online`;
+    if (el) {
+      el.innerHTML =
+        `${online} ${online === 1 ? "jucator" : "jucatori"} online` +
+        `<br><span class="stat-dim">${searching} in lobby (cauta adversar) · ${inGame} in joc</span>`;
+    }
+    const tournamentBtn = document.getElementById("btn-tournament-menu");
+    if (tournamentBtn) {
+      tournamentBtn.disabled = online < 4;
+      tournamentBtn.textContent = online < 4
+        ? "Turneu (necesita minim 4 jucatori online)"
+        : "Turneu";
+    }
   });
 
   // Global chat.
@@ -61,6 +75,12 @@ document.getElementById("login-form").addEventListener("submit", async (e) => {
 
   showScreen("menu");
 });
+
+function setPresenceStatus(status) {
+  if (state.presenceStatus === status) return;
+  state.presenceStatus = status;
+  if (state.uid) MP.heartbeatPresence(state.uid, state.name, status).catch(() => {});
+}
 
 // ---------- MENU ----------
 document.getElementById("btn-vs-ai").addEventListener("click", () => {
@@ -81,6 +101,7 @@ document.getElementById("btn-vs-player").addEventListener("click", async () => {
 
 /** Starts (or restarts) a quick-match search. Stays on the placement screen. */
 async function searchForOpponent() {
+  setPresenceStatus("searching");
   setStatus("placement", "Se cauta un adversar...");
   updatePlacementInfo();
   const cancel = await MP.quickMatch(state.uid, state.name, (gameId) => {
@@ -162,6 +183,7 @@ const SHIP_LABELS = ["primul", "al doilea", "al treilea"];
 function startPlacement(isMultiplayer = false) {
   state.myShips = [];
   state.rotation = 0;
+  if (state.mode === "pvp") setPresenceStatus("placing");
   showScreen("placement");
   updatePlacementInfo();
   refreshConfirmButtonAvailability();
@@ -177,9 +199,14 @@ function startPlacement(isMultiplayer = false) {
       hoverAnchor = [r, c];
       drawPlacementBoard();
     });
+    container.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      rotateShip();
+    });
     container.dataset.hoverBound = "true";
   }
 
+  drawShipPreview();
   drawPlacementBoard();
 }
 
@@ -263,10 +290,33 @@ function refreshConfirmButtonAvailability() {
 
 function rotateShip() {
   state.rotation = (state.rotation + 1) % 4;
+  drawShipPreview();
   drawPlacementBoard();
 }
 
 document.getElementById("btn-rotate-ship").addEventListener("click", rotateShip);
+
+// Mini preview of the plane's shape + which cell you'll click (the anchor,
+// marked in amber) — helps a lot on mobile where there's no hover preview.
+function drawShipPreview() {
+  const el = document.getElementById("ship-preview");
+  if (!el) return;
+  const { rows, cols } = getShapeBounds(state.rotation);
+  const shipCells = cellsToSet(SHAPES[state.rotation].map(([r, c]) => [r, c]));
+
+  el.style.gridTemplateColumns = `repeat(${cols}, 18px)`;
+  el.style.gridTemplateRows = `repeat(${rows}, 18px)`;
+  el.innerHTML = "";
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const cell = document.createElement("div");
+      cell.className = "ship-preview-cell";
+      if (shipCells.has(`${r},${c}`)) cell.classList.add("filled");
+      if (r === 0 && c === 0) cell.classList.add("anchor");
+      el.appendChild(cell);
+    }
+  }
+}
 
 document.addEventListener("keydown", (e) => {
   if (e.key.toLowerCase() === "r" && screens.placement.classList.contains("active")) {
@@ -305,6 +355,7 @@ function isGameUnfinished() {
 }
 
 function cleanupGameState() {
+  setPresenceStatus("idle");
   if (state.unsubGame) { state.unsubGame(); state.unsubGame = null; }
   if (state.cancelQuickMatch) { state.cancelQuickMatch(); state.cancelQuickMatch = null; }
   stopPvpPolling();
@@ -463,6 +514,7 @@ async function processGameSnapshot(data) {
 
   if (!screens.game.classList.contains("active")) {
     showScreen("game");
+    setPresenceStatus("playing");
   }
 
   let effectiveData = data;
@@ -475,6 +527,11 @@ async function processGameSnapshot(data) {
   }
   if (effectiveData.status === "playing") {
     await MP.expireTurnIfNeeded(state.gameId, effectiveData);
+  }
+  if (effectiveData.status === "finished" && effectiveData.tournamentId) {
+    MP.advanceTournamentIfNeeded(
+      effectiveData.tournamentId, effectiveData.round, effectiveData.matchIndex, effectiveData.winner,
+    ).catch(() => {});
   }
   renderMultiplayerGameState(effectiveData);
 }
@@ -670,7 +727,178 @@ function launchDebris() {
   setTimeout(() => overlay.remove(), 3200);
 }
 
-// TEMPORARY DEBUG HELPER — safe to remove once the turn-sync issue is
+// ---------- TOURNAMENTS ----------
+document.getElementById("btn-tournament-menu").addEventListener("click", () => {
+  showMenuNotice("");
+  showScreen("tournament");
+  document.getElementById("tournament-queue-view").style.display = "block";
+  document.getElementById("tournament-bracket-view").style.display = "none";
+  document.getElementById("tournament-queue-status").textContent = "";
+
+  if (state.tournamentQueueCountsUnsub) state.tournamentQueueCountsUnsub();
+  state.tournamentQueueCountsUnsub = MP.listenTournamentQueueCounts((counts) => {
+    MP.TOURNAMENT_SIZES.forEach((size) => {
+      const el = document.getElementById(`tq-count-${size}`);
+      if (el) el.textContent = counts[size];
+    });
+  });
+});
+
+document.getElementById("btn-back-to-menu-from-tournament").addEventListener("click", async () => {
+  if (state.tournamentQueueCountsUnsub) { state.tournamentQueueCountsUnsub(); state.tournamentQueueCountsUnsub = null; }
+  if (state.tournamentAssignmentUnsub) { state.tournamentAssignmentUnsub(); state.tournamentAssignmentUnsub = null; }
+  if (state.tournamentQueueSize && !state.tournamentId) {
+    await MP.leaveTournamentQueue(state.uid, state.tournamentQueueSize).catch(() => {});
+  }
+  state.tournamentQueueSize = null;
+  showScreen("menu");
+});
+
+[4, 8, 16].forEach((size) => {
+  document.getElementById(`btn-tournament-${size}`).addEventListener("click", () => joinTournamentSize(size));
+});
+
+async function joinTournamentSize(size) {
+  state.tournamentQueueSize = size;
+  document.getElementById("tournament-queue-status").textContent =
+    `Cautam jucatori pentru turneul de ${size}... ramai pe aceasta pagina.`;
+
+  if (state.tournamentAssignmentUnsub) state.tournamentAssignmentUnsub();
+  state.tournamentAssignmentUnsub = MP.listenTournamentAssignment(state.uid, (assignment) => {
+    if (!assignment?.tournamentId) return;
+    state.tournamentAssignmentUnsub();
+    state.tournamentAssignmentUnsub = null;
+    if (state.tournamentQueueCountsUnsub) { state.tournamentQueueCountsUnsub(); state.tournamentQueueCountsUnsub = null; }
+    document.getElementById("tournament-queue-view").style.display = "none";
+    document.getElementById("tournament-bracket-view").style.display = "block";
+    subscribeTournament(assignment.tournamentId);
+  });
+
+  await MP.joinTournamentQueue(state.uid, state.name, size);
+}
+
+function subscribeTournament(tournamentId) {
+  if (state.tournamentUnsub) { state.tournamentUnsub(); state.tournamentUnsub = null; }
+  state.tournamentId = tournamentId;
+  state.tournamentResultShown = false;
+  state.tournamentUnsub = MP.listenTournament(tournamentId, (data) => handleTournamentUpdate(data));
+}
+
+function handleTournamentUpdate(data) {
+  state.tournamentData = data;
+  renderTournamentBracket(data);
+
+  if (data.status === "finished") {
+    showTournamentFinalScreen(data);
+    return;
+  }
+
+  // Find the latest match (across all rounds so far) that involves me.
+  let myMatch = null;
+  data.rounds.forEach((roundObj) => {
+    roundObj.matches.forEach((m) => {
+      if (m.player1 === state.uid || m.player2 === state.uid) myMatch = m;
+    });
+  });
+  if (!myMatch) return;
+
+  if (myMatch.winner && myMatch.winner !== state.uid) {
+    showTournamentEliminated();
+    return;
+  }
+  if (myMatch.winner === state.uid) {
+    showScreen("tournament");
+    document.getElementById("tournament-queue-view").style.display = "none";
+    document.getElementById("tournament-bracket-view").style.display = "block";
+    setTournamentStatusText("Ai castigat acest meci! Asteptam sa se termine si celelalte meciuri din runda...");
+    return;
+  }
+
+  // Active, unresolved match for me — join it if it's new (covers both the
+  // very first match and every subsequent round's match automatically).
+  if (myMatch.gameId && myMatch.gameId !== state.currentMatchGameId) {
+    state.currentMatchGameId = myMatch.gameId;
+    state.mode = "pvp";
+    state.matchMethod = "tournament";
+    state.gameId = myMatch.gameId;
+    state.opponentFound = true;
+    subscribeMultiplayerGame();
+    startPlacement(true);
+  }
+}
+
+function setTournamentStatusText(text) {
+  const el = document.getElementById("tournament-status-text");
+  if (el) el.textContent = text;
+}
+
+function roundName(totalRounds, round) {
+  const fromEnd = totalRounds - 1 - round;
+  if (fromEnd === 0) return "Finala";
+  if (fromEnd === 1) return "Semifinale";
+  if (fromEnd === 2) return "Sferturi de finala";
+  if (fromEnd === 3) return "Optimi de finala";
+  return `Runda ${round + 1}`;
+}
+
+function renderTournamentBracket(data) {
+  const container = document.getElementById("tournament-bracket");
+  if (!container) return;
+  const totalRounds = Math.log2(data.size);
+
+  container.innerHTML = data.rounds.map((roundObj, rIdx) => `
+    <div>
+      <div class="tournament-round-title">${roundName(totalRounds, rIdx)}</div>
+      <div class="tournament-round-matches">
+        ${roundObj.matches.map((m) => {
+          const p1Classes = ["tournament-match-player"];
+          const p2Classes = ["tournament-match-player"];
+          if (m.winner === m.player1) p1Classes.push("winner");
+          else if (m.winner) p1Classes.push("loser");
+          if (m.winner === m.player2) p2Classes.push("winner");
+          else if (m.winner) p2Classes.push("loser");
+          if (m.player1 === state.uid) p1Classes.push("me");
+          if (m.player2 === state.uid) p2Classes.push("me");
+          return `
+            <div class="tournament-match">
+              <div class="${p1Classes.join(" ")}"><span>${escapeHtml(m.player1Name)}</span></div>
+              <div class="${p2Classes.join(" ")}"><span>${escapeHtml(m.player2Name)}</span></div>
+            </div>`;
+        }).join("")}
+      </div>
+    </div>
+  `).join("");
+}
+
+function showTournamentEliminated() {
+  showScreen("tournament");
+  document.getElementById("tournament-queue-view").style.display = "none";
+  document.getElementById("tournament-bracket-view").style.display = "block";
+  setTournamentStatusText("Ai fost eliminat din turneu. Poti urmari restul meciurilor mai jos.");
+  if (!state.tournamentResultShown) {
+    state.tournamentResultShown = true;
+    launchDebris();
+  }
+}
+
+function showTournamentFinalScreen(data) {
+  showScreen("tournament");
+  document.getElementById("tournament-queue-view").style.display = "none";
+  document.getElementById("tournament-bracket-view").style.display = "block";
+
+  const won = data.champion === state.uid;
+  const championName = data.players.find((p) => p.uid === data.champion)?.name || "?";
+  setTournamentStatusText(
+    won ? "Ai castigat turneul!" : `Turneul s-a incheiat. Campion: ${championName}.`,
+  );
+
+  if (!state.tournamentResultShown) {
+    state.tournamentResultShown = true;
+    if (won) launchConfetti(); else launchDebris();
+  }
+}
+
+// ---------- TEMPORARY DEBUG HELPER — safe to remove once the turn-sync issue is
 // confirmed fixed. Lets you check, from the browser console, exactly what
 // this tab's session thinks its own uid/mode/gameId are, to compare against
 // what's stored in Firestore.

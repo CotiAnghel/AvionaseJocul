@@ -316,21 +316,26 @@ export async function abandonDuringPlacement(gameId, uid) {
 const PRESENCE = "presence";
 const ONLINE_WINDOW_MS = 60000; // considered "online" if a heartbeat landed in the last 60s
 
-/** Writes/refreshes this player's presence heartbeat. Call this periodically. */
-export async function heartbeatPresence(uid, name) {
-  await setDoc(doc(db, PRESENCE, uid), { name, lastSeen: serverTimestamp() });
+/** Writes/refreshes this player's presence heartbeat, along with what they're currently doing. */
+export async function heartbeatPresence(uid, name, status = "idle") {
+  await setDoc(doc(db, PRESENCE, uid), { name, status, lastSeen: serverTimestamp() });
 }
 
-/** Live count of players active in the last minute. */
+/** Live breakdown: how many players are online total, searching for a match, and in an active game. */
 export function listenOnlineCount(callback) {
   return onSnapshot(collection(db, PRESENCE), (snap) => {
     const now = Date.now();
-    const count = snap.docs.filter((d) => {
-      const ts = d.data().lastSeen;
-      if (!ts || typeof ts.toMillis !== "function") return false;
-      return now - ts.toMillis() < ONLINE_WINDOW_MS;
-    }).length;
-    callback(count);
+    let online = 0, searching = 0, inGame = 0;
+    snap.docs.forEach((d) => {
+      const data = d.data();
+      const ts = data.lastSeen;
+      if (!ts || typeof ts.toMillis !== "function") return;
+      if (now - ts.toMillis() >= ONLINE_WINDOW_MS) return;
+      online++;
+      if (data.status === "searching") searching++;
+      else if (data.status === "placing" || data.status === "playing") inGame++;
+    });
+    callback({ online, searching, inGame });
   });
 }
 
@@ -350,4 +355,183 @@ export async function sendChatMessage(uid, name, text) {
   const trimmed = text.trim().slice(0, 200);
   if (!trimmed) return;
   await addDoc(collection(db, CHAT), { uid, name, text: trimmed, createdAt: serverTimestamp() });
+}
+
+// ---------- TOURNAMENTS ----------
+const TOURNAMENTS = "tournaments";
+const TOURNAMENT_QUEUE_META = "tournamentQueueMeta";
+const TOURNAMENT_ASSIGNMENT = "tournamentAssignment";
+export const TOURNAMENT_SIZES = [4, 8, 16];
+
+function shuffle(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+function buildTournamentRound(playerList) {
+  const matches = [];
+  for (let i = 0; i < playerList.length; i += 2) {
+    const p1 = playerList[i], p2 = playerList[i + 1];
+    matches.push({
+      player1: p1.uid, player1Name: p1.name,
+      player2: p2.uid, player2Name: p2.name,
+      winner: null,
+      gameId: `T${roomCode()}`,
+    });
+  }
+  return matches;
+}
+
+function buildTournamentMatchGameDoc(match, tournamentId, round, matchIndex) {
+  return {
+    players: { [match.player1]: { name: match.player1Name }, [match.player2]: { name: match.player2Name } },
+    order: [match.player1, match.player2],
+    status: "placing",
+    ready: {},
+    turn: match.player1,
+    turnStartedAt: serverTimestamp(),
+    pendingShot: null,
+    hits: {},
+    destroyedCount: {},
+    winner: null,
+    endReason: null,
+    password: null,
+    createdAt: serverTimestamp(),
+    tournamentId,
+    round,
+    matchIndex,
+  };
+}
+
+/**
+ * Joins the queue for a tournament of the given size (4/8/16). Once enough
+ * players have queued, whichever client's join happens to fill the queue
+ * forms the tournament, seeds round 1, and notifies every selected player
+ * via their own tournamentAssignment doc (so the OTHER players who were
+ * already waiting find out too).
+ */
+export async function joinTournamentQueue(uid, name, size) {
+  const metaRef = doc(db, TOURNAMENT_QUEUE_META, String(size));
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(metaRef);
+    const data = snap.exists() ? snap.data() : { members: [] };
+    let members = data.members || [];
+    if (!members.find((m) => m.uid === uid)) members = [...members, { uid, name }];
+
+    if (members.length >= size) {
+      const selected = members.slice(0, size);
+      const remaining = members.slice(size);
+      const shuffled = shuffle(selected);
+      const matches = buildTournamentRound(shuffled);
+      const tournamentId = `T${roomCode()}`;
+
+      tx.set(doc(db, TOURNAMENTS, tournamentId), {
+        size,
+        status: "active",
+        players: shuffled,
+        rounds: [{ matches }],
+        champion: null,
+        createdAt: serverTimestamp(),
+      });
+      matches.forEach((m, idx) => {
+        tx.set(doc(db, GAMES, m.gameId), buildTournamentMatchGameDoc(m, tournamentId, 0, idx));
+      });
+      selected.forEach((p) => {
+        tx.set(doc(db, TOURNAMENT_ASSIGNMENT, p.uid), { tournamentId, ts: serverTimestamp() });
+      });
+      tx.set(metaRef, { members: remaining });
+    } else {
+      tx.set(metaRef, { members });
+    }
+  });
+}
+
+export async function leaveTournamentQueue(uid, size) {
+  const metaRef = doc(db, TOURNAMENT_QUEUE_META, String(size));
+  try {
+    await runTransaction(db, async (tx) => {
+      const snap = await tx.get(metaRef);
+      if (!snap.exists()) return;
+      const members = (snap.data().members || []).filter((m) => m.uid !== uid);
+      tx.set(metaRef, { members });
+    });
+  } catch (e) { /* best effort */ }
+}
+
+/** Live queue sizes for all three tournament formats at once. */
+export function listenTournamentQueueCounts(callback) {
+  const counts = {};
+  TOURNAMENT_SIZES.forEach((s) => { counts[s] = 0; });
+  const unsubs = TOURNAMENT_SIZES.map((size) =>
+    onSnapshot(doc(db, TOURNAMENT_QUEUE_META, String(size)), (snap) => {
+      counts[size] = snap.exists() ? (snap.data().members || []).length : 0;
+      callback({ ...counts });
+    })
+  );
+  return () => unsubs.forEach((u) => u());
+}
+
+/** Notifies a queued (waiting) player once a tournament has formed around them. */
+export function listenTournamentAssignment(uid, callback) {
+  return onSnapshot(doc(db, TOURNAMENT_ASSIGNMENT, uid), (snap) => {
+    if (snap.exists()) callback(snap.data());
+  });
+}
+
+export function listenTournament(tournamentId, callback) {
+  return onSnapshot(doc(db, TOURNAMENTS, tournamentId), (snap) => {
+    if (snap.exists()) callback(snap.data());
+  });
+}
+
+/**
+ * Records a finished match's winner in the bracket, and — if that completes
+ * the round — seeds the next round (or crowns the champion, if it was the
+ * final). Safe to call from both players' clients: the transaction's
+ * "already recorded" check keeps it from double-applying.
+ */
+export async function advanceTournamentIfNeeded(tournamentId, round, matchIndex, winnerUid) {
+  const ref = doc(db, TOURNAMENTS, tournamentId);
+  try {
+    await runTransaction(db, async (tx) => {
+      const snap = await tx.get(ref);
+      const data = snap.data();
+      if (!data || data.status === "finished") return;
+
+      const rounds = data.rounds.map((r) => ({ matches: r.matches.map((m) => ({ ...m })) }));
+      const match = rounds[round]?.matches?.[matchIndex];
+      if (!match || match.winner) return; // already recorded, or bad reference
+
+      match.winner = winnerUid;
+      const roundComplete = rounds[round].matches.every((m) => m.winner);
+
+      if (!roundComplete) {
+        tx.update(ref, { rounds });
+        return;
+      }
+
+      const totalRounds = Math.log2(data.size);
+      if (round === totalRounds - 1) {
+        tx.update(ref, { rounds, status: "finished", champion: winnerUid });
+        return;
+      }
+
+      const winners = rounds[round].matches.map((m) => ({
+        uid: m.winner,
+        name: m.winner === m.player1 ? m.player1Name : m.player2Name,
+      }));
+      const nextMatches = buildTournamentRound(winners);
+      nextMatches.forEach((m, idx) => {
+        tx.set(doc(db, GAMES, m.gameId), buildTournamentMatchGameDoc(m, tournamentId, round + 1, idx));
+      });
+      rounds[round + 1] = { matches: nextMatches };
+      tx.update(ref, { rounds });
+    });
+  } catch (e) {
+    // best effort — the other finalist's client (or a later retry) will catch it
+  }
 }

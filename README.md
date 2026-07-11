@@ -51,6 +51,19 @@ service cloud.firestore {
       allow create: if request.auth != null && request.auth.uid == request.resource.data.uid;
       allow update, delete: if false; // mesajele de chat sunt imuabile odata trimise
     }
+
+    match /tournaments/{tournamentId} {
+      allow read, write: if request.auth != null;
+    }
+
+    match /tournamentQueueMeta/{size} {
+      allow read, write: if request.auth != null;
+    }
+
+    match /tournamentAssignment/{uid} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null; // scris de clientul care formeaza turneul, pentru fiecare jucator selectat
+    }
   }
 }
 ```
@@ -84,6 +97,11 @@ apoi deschide `http://localhost:8000`.
 - **Reconectare**: dacă cineva dă refresh la pagină în timpul unui joc PvP,
   `state.gameId` se pierde — ar merga bine să-l salvezi în `localStorage` și
   să reiei automat conexiunea la acel joc la reîncărcare.
+- **Turneu**: bracket-ul e afișat ca listă text (fără schemă vizuală de tip
+  arbore). Necesită ca toți jucătorii să rămână online pe tot parcursul
+  turneului — nu există reconectare dacă cineva dă refresh în timpul unui
+  meci de turneu. Dacă un jucător abandonează un meci de turneu (butonul
+  "Închide jocul"), e eliminat automat prin abandon, iar adversarul avansează.
 - **AI "greu"**: folosește o hartă de densitate/probabilitate (calculează
   toate plasările posibile rămase și lovește celula cea mai probabilă) — e un
   punct de plecare bun, dar poate fi rafinat (de ex. să excludă combinații

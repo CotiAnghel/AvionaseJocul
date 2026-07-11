@@ -43,6 +43,14 @@ export function getShipCells(anchorRow, anchorCol, rotation) {
   return SHAPES[rotation].map(([r, c]) => [anchorRow + r, anchorCol + c]);
 }
 
+/** Bounding-box size (rows x cols) of a rotation — used to draw the mini preview. */
+export function getShapeBounds(rotation) {
+  const shape = SHAPES[rotation];
+  const maxR = Math.max(...shape.map((p) => p[0]));
+  const maxC = Math.max(...shape.map((p) => p[1]));
+  return { rows: maxR + 1, cols: maxC + 1 };
+}
+
 /**
  * Checks whether a plane placement is valid on a 10x10 board:
  * - all cells in bounds

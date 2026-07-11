@@ -43,6 +43,7 @@
       <button id="btn-vs-ai" class="btn-primary">Joc vs Calculator</button>
       <button id="btn-vs-player" class="btn-secondary">Cauta un adversar (PvP)</button>
       <button id="btn-private-room" class="btn-secondary">Camera privata (invitatie)</button>
+      <button id="btn-tournament-menu" class="btn-secondary" disabled>Turneu (necesita minim 4 jucatori online)</button>
 
       <p id="online-count" class="online-count"></p>
     </div>
@@ -90,13 +91,43 @@
       <h2>Plaseaza-ti avioanele</h2>
       <p id="placement-status-text" class="hint"></p>
       <p id="placement-info" class="hint"></p>
-      <div id="placement-board-container" class="board-grid"></div>
+      <div class="placement-layout">
+        <div id="placement-board-container" class="board-grid"></div>
+        <div class="ship-preview-box">
+          <div class="ship-preview-label">Forma avionului</div>
+          <div id="ship-preview" class="ship-preview-grid"></div>
+          <div class="ship-preview-legend">
+            <span class="legend-dot legend-anchor"></span> casuta pe care dai click
+          </div>
+        </div>
+      </div>
       <div class="placement-controls">
         <button id="btn-rotate-ship" class="btn-secondary">Roteste avionul (R)</button>
         <button id="btn-undo-ship" class="btn-secondary">Anuleaza ultimul avion</button>
         <button id="btn-confirm-placement" class="btn-primary" disabled>Confirma plasarea</button>
       </div>
-      <p class="hint">Sfat: pe calculator, miscarea mouse-ului iti arata unde se va plasa avionul. Pe telefon/tableta, primul tap arata previzualizarea, al doilea tap pe aceeasi celula confirma plasarea.</p>
+      <p class="hint">Sfat: pe calculator, miscarea mouse-ului iti arata unde se va plasa avionul; click-dreapta roteste avionul. Pe telefon/tableta, primul tap arata previzualizarea, al doilea tap pe aceeasi celula confirma plasarea.</p>
+    </div>
+  </section>
+
+  <!-- TOURNAMENT -->
+  <section id="screen-tournament" class="screen">
+    <div class="panel panel-wide">
+      <button id="btn-back-to-menu-from-tournament" class="btn-back">&larr; Inapoi la meniu</button>
+      <h2>Turneu</h2>
+
+      <div id="tournament-queue-view">
+        <p class="hint">Alege dimensiunea turneului. Meciurile incep automat cand se aduna suficienti jucatori.</p>
+        <button id="btn-tournament-4" class="btn-secondary">Turneu de 4 (<span id="tq-count-4">0</span>/4)</button>
+        <button id="btn-tournament-8" class="btn-secondary">Turneu de 8 (<span id="tq-count-8">0</span>/8)</button>
+        <button id="btn-tournament-16" class="btn-secondary">Turneu de 16 (<span id="tq-count-16">0</span>/16)</button>
+        <p id="tournament-queue-status" class="hint"></p>
+      </div>
+
+      <div id="tournament-bracket-view" style="display:none;">
+        <p id="tournament-status-text" class="hint"></p>
+        <div id="tournament-bracket" class="tournament-bracket"></div>
+      </div>
     </div>
   </section>
 
