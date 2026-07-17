@@ -71,7 +71,13 @@ document.getElementById("login-form").addEventListener("submit", async (e) => {
   });
 
   // Global chat.
-  MP.listenChat((messages) => renderChat(messages));
+  MP.listenChat((messages) => {
+    state.chatMessages = messages;
+    renderChat(messages);
+  });
+  state.chatExpireInterval = setInterval(() => {
+    if (state.chatMessages) renderChat(state.chatMessages);
+  }, 15000);
 
   showScreen("menu");
 });
@@ -648,12 +654,22 @@ function nameColor(uid) {
   return `hsl(${hash}, 70%, 65%)`;
 }
 
+const CHAT_MESSAGE_LIFETIME_MS = 5 * 60 * 1000;
+
 function renderChat(messages) {
   const container = document.getElementById("chat-messages");
   if (!container) return;
   const wasScrolledToBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 30;
 
-  container.innerHTML = messages.map((m) => {
+  const now = Date.now();
+  const visible = messages.filter((m) => {
+    // Messages that haven't been timestamped by the server yet (just sent,
+    // still "pending") are always shown — they can't be expired yet.
+    if (!m.createdAt?.toMillis) return true;
+    return now - m.createdAt.toMillis() < CHAT_MESSAGE_LIFETIME_MS;
+  });
+
+  container.innerHTML = visible.map((m) => {
     const time = m.createdAt?.toDate
       ? m.createdAt.toDate().toLocaleTimeString("ro-RO", { hour: "2-digit", minute: "2-digit" })
       : "--:--";
