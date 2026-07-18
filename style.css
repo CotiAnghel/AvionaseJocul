@@ -61,6 +61,42 @@ body {
   50% { opacity: 0.4; transform: scale(0.7); }
 }
 
+.install-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--panel);
+  border: 1px solid var(--radar-green);
+  border-radius: 6px;
+  padding: 10px 14px;
+  margin-bottom: 20px;
+  font-size: 0.85rem;
+  color: var(--text);
+}
+
+.install-banner-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.install-banner .btn-small {
+  padding: 6px 12px;
+  font-size: 0.8rem;
+}
+
+.install-dismiss {
+  padding: 0 6px;
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+@media (max-width: 480px) {
+  .install-banner { flex-direction: column; align-items: stretch; text-align: center; }
+}
+
 .screen { display: none; }
 .screen.active { display: block; }
 

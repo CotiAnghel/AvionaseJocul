@@ -914,6 +914,74 @@ function showTournamentFinalScreen(data) {
   }
 }
 
+// ---------- PWA INSTALL PROMPT ----------
+let deferredInstallPrompt = null;
+
+function isStandaloneDisplay() {
+  return window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
+}
+
+function isIOSDevice() {
+  return /iphone|ipad|ipod/i.test(navigator.userAgent);
+}
+
+function showInstallBanner() {
+  if (isStandaloneDisplay()) return; // already running as an installed app
+  if (localStorage.getItem("avionase-install-dismissed") === "1") return;
+
+  const banner = document.getElementById("install-banner");
+  const textEl = document.getElementById("install-banner-text");
+  const installBtn = document.getElementById("btn-install-app");
+  if (!banner || !textEl || !installBtn) return;
+
+  if (deferredInstallPrompt) {
+    textEl.textContent = "Poti instala Avionase ca aplicatie locala, pentru acces rapid de pe ecranul principal.";
+    installBtn.style.display = "inline-block";
+  } else if (isIOSDevice()) {
+    textEl.textContent =
+      "Pe iPhone/iPad: apasa butonul Distribuie din Safari, apoi \"Adauga pe ecranul principal\", ca sa instalezi Avionase local.";
+    installBtn.style.display = "none";
+  } else {
+    return; // this browser doesn't offer an install path we can act on
+  }
+  banner.style.display = "flex";
+}
+
+window.addEventListener("beforeinstallprompt", (e) => {
+  e.preventDefault();
+  deferredInstallPrompt = e;
+  showInstallBanner();
+});
+
+document.getElementById("btn-install-app")?.addEventListener("click", async () => {
+  if (!deferredInstallPrompt) return;
+  deferredInstallPrompt.prompt();
+  await deferredInstallPrompt.userChoice;
+  deferredInstallPrompt = null;
+  document.getElementById("install-banner").style.display = "none";
+});
+
+document.getElementById("btn-dismiss-install")?.addEventListener("click", () => {
+  localStorage.setItem("avionase-install-dismissed", "1");
+  document.getElementById("install-banner").style.display = "none";
+});
+
+window.addEventListener("appinstalled", () => {
+  document.getElementById("install-banner").style.display = "none";
+});
+
+// beforeinstallprompt never fires on iOS Safari, so check for it directly.
+if (isIOSDevice() && !isStandaloneDisplay()) {
+  showInstallBanner();
+}
+
+// Register the service worker (enables installability + basic offline shell).
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("sw.js").catch(() => {});
+  });
+}
+
 // ---------- TEMPORARY DEBUG HELPER — safe to remove once the turn-sync issue is
 // confirmed fixed. Lets you check, from the browser console, exactly what
 // this tab's session thinks its own uid/mode/gameId are, to compare against

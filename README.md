@@ -117,14 +117,17 @@ apoi deschide `http://localhost:8000`.
 ## Structura fișierelor
 
 ```
-index.html              - toate ecranele (login/menu/placement/game)
+index.html              - toate ecranele (login/menu/placement/game/tournament)
 style.css               - tema vizuală (radar/aviație)
+manifest.json           - manifest PWA (nume, iconițe, culori) - permite instalarea locală
+sw.js                   - service worker minimal (instalabilitate + cache de bază)
+icons/                  - iconițele aplicației (192, 512, maskable, apple-touch-icon)
 js/
   firebase-init.js      - config Firebase + autentificare anonimă
   ship-shapes.js        - forma avionului + rotații + validare plasare
   board.js              - randare grid 10x10 + etichete (3F etc.)
   ai.js                 - AI cu 3 dificultăți
   game-local.js          - joc complet vs. calculator (fără rețea)
-  multiplayer.js         - matchmaking, camere private, sincronizare Firestore
+  multiplayer.js         - matchmaking, camere private, turnee, chat, sincronizare Firestore
   app.js                 - controller principal, leagă UI-ul de restul
 ```
